@@ -40,9 +40,18 @@ Przeglądarka **nie może** sama uruchamiać PowerShell na Twoim komputerze — 
 
 - Wszystkie bloki dzielą **jedną, długo żyjącą sesję PowerShell** (`SessionManager`/`ShellSession` w [src-tauri/src/lib.rs](src-tauri/src/lib.rs), używana zarówno przez aplikację desktopową, jak i przez agenta w trybie web) — zmienne, zaimportowane moduły, `cd` przechodzą z bloku do bloku, dokładnie jak w prawdziwej konsoli. Sesja startuje przy pierwszym uruchomionym bloku i żyje, dopóki nie zamkniesz aplikacji/agenta albo nie klikniesz "Nowa sesja".
 - Pojedynczy blok ma limit **120 sekund** — jeśli go przekroczy (np. nieskończona pętla), zwróci błąd timeoutu. W takim wypadku sesja może zostać zawieszona (blokuje kolejne bloki) — użyj przycisku "🔄 Nowa sesja", żeby wymusić restart procesu PowerShell (traci wszystkie zmienne, ale odblokowuje dalszą pracę). Twardego przerwania pojedynczego zawieszonego bloku w locie na razie nie ma.
-- Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf" (sortowanie topologiczne, wykrywanie cykli).
+- Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf".
 - Kliknięcie na linię połączenia usuwa je.
 - "💾 Zapisz" pobiera cały graf (bloki, pozycje, treść skryptów, połączenia — bez wyników) jako plik `.json`. "📂 Wczytaj" wczytuje taki plik z powrotem, zastępując bieżący graf.
+
+### Typy węzłów
+
+- **Skrypt** ("+ Skrypt") — jak dotychczas, dowolny fragment PowerShell.
+- **Warunek** ("+ Warunek") — wyrażenie logiczne (np. `$x -gt 5`), ma dwa wyjścia: "✓" (tak, zielone) i "✗" (nie, czerwone) — wykonanie idzie tylko jedną z tych ścieżek, w zależności od wyniku.
+- **Pętla** ("+ Pętla") — dwa tryby: "Powtórz N razy" (liczba lub wyrażenie PowerShell zwracające liczbę) albo "Dla każdego" (wyrażenie zwracające listę, np. `Get-ChildItem *.txt`). Ma dwa wyjścia: "pętla" (fioletowe — uruchamia podłączone bloki raz na iterację) i "po pętli" (szare — uruchamia się raz, po zakończeniu wszystkich iteracji). Bieżący element/indeks trafia do zmiennej sesji o podanej nazwie (domyślnie `$i`), więc bloki w ciele pętli mają do niej dostęp. Limit **1000 iteracji** jako zabezpieczenie przed nieskończoną pętlą.
+- **Notatka** ("+ Notatka") — czysto opisowy węzeł bez żadnych połączeń ani wykonania, do dokumentowania grafu.
+
+Przycisk "Uruchom blok"/"Sprawdź warunek"/"Podgląd iteracji" na pojedynczym węźle Warunek/Pętla pokazuje wynik (którą gałąź by wybrał / ile byłoby iteracji) bez uruchamiania dalszej części grafu.
 
 ## Model bezpieczeństwa trybu web
 
@@ -87,5 +96,4 @@ Pliki nie są podpisane certyfikatem code-signing (Windows SmartScreen pokaże o
 
 ## Znane ograniczenia / dalszy rozwój
 
-- Brak twardego przerwania pojedynczego zawieszonego bloku (np. nieskończonej pętli) — trzeba zrestartować całą sesję przyciskiem "Nowa sesja".
-- Brak typów węzłów poza "surowy skrypt PowerShell" (np. węzły warunkowe, pętle, zmienne wejścia/wyjścia między blokami).
+- Brak twardego przerwania pojedynczego zawieszonego bloku (np. nieskończonej pętli w bloku typu Skrypt) — trzeba zrestartować całą sesję przyciskiem "Nowa sesja".

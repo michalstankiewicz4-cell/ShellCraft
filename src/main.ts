@@ -6,9 +6,14 @@ interface NodeOutput {
   code: number | null;
 }
 
+type NodeKind = "script" | "condition" | "loop" | "comment";
+type Branch = "out" | "true" | "false" | "body" | "done";
+type LoopMode = "count" | "foreach";
+
 const AGENT_URL = "http://127.0.0.1:47932";
 const TOKEN_KEY = "shellcraft-agent-token";
 const desktopMode = isTauri();
+const MAX_LOOP_ITERATIONS = 1000;
 
 function getAgentToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? "";
@@ -70,26 +75,47 @@ async function restartSession(): Promise<void> {
 
 interface NodeBlock {
   id: string;
+  kind: NodeKind;
   el: HTMLDivElement;
   titleInput: HTMLInputElement;
-  scriptEl: HTMLTextAreaElement;
-  outputEl: HTMLPreElement;
-  outConn: HTMLDivElement;
-  inConn: HTMLDivElement;
+  scriptEl?: HTMLTextAreaElement;
+  loopModeSelect?: HTMLSelectElement;
+  loopVarInput?: HTMLInputElement;
+  outputEl?: HTMLPreElement;
+  inConn?: HTMLDivElement;
+  outConns: Partial<Record<Branch, HTMLDivElement>>;
   x: number;
   y: number;
-}
-
-interface SavedGraph {
-  nodes: { id: string; x: number; y: number; title: string; script: string }[];
-  edges: { from: string; to: string }[];
 }
 
 interface Edge {
   id: string;
   from: string;
   to: string;
+  branch: Branch;
   pathEl: SVGPathElement;
+}
+
+interface SavedNode {
+  id: string;
+  kind?: NodeKind;
+  x: number;
+  y: number;
+  title: string;
+  script: string;
+  loopMode?: LoopMode;
+  loopVar?: string;
+}
+
+interface SavedEdge {
+  from: string;
+  to: string;
+  branch?: Branch;
+}
+
+interface SavedGraph {
+  nodes: SavedNode[];
+  edges: SavedEdge[];
 }
 
 const nodes = new Map<string, NodeBlock>();
@@ -120,63 +146,177 @@ function edgePathD(x1: number, y1: number, x2: number, y2: number): string {
   return `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`;
 }
 
+function edgeColor(branch: Branch): string {
+  switch (branch) {
+    case "true":
+      return "#4ec9b0";
+    case "false":
+      return "#f14c4c";
+    case "body":
+      return "#c586c0";
+    case "done":
+      return "#888888";
+    default:
+      return "#569cd6";
+  }
+}
+
 function redrawEdges() {
   for (const edge of edges) {
     const from = nodes.get(edge.from);
     const to = nodes.get(edge.to);
-    if (!from || !to) continue;
-    const p1 = connCenter(from.outConn);
+    if (!from || !to || !to.inConn) continue;
+    const outEl = from.outConns[edge.branch];
+    if (!outEl) continue;
+    const p1 = connCenter(outEl);
     const p2 = connCenter(to.inConn);
     edge.pathEl.setAttribute("d", edgePathD(p1.x, p1.y, p2.x, p2.y));
+  }
+}
+
+function kindLabel(kind: NodeKind): string {
+  switch (kind) {
+    case "script":
+      return "Blok";
+    case "condition":
+      return "Warunek";
+    case "loop":
+      return "Pętla";
+    case "comment":
+      return "Notatka";
+  }
+}
+
+function nodeBodyHtml(kind: NodeKind): string {
+  switch (kind) {
+    case "script":
+      return `
+        <div class="node-body">
+          <textarea class="script" spellcheck="false" placeholder="Get-ChildItem"></textarea>
+          <button class="run-node">Uruchom blok</button>
+          <pre class="output"></pre>
+        </div>`;
+    case "condition":
+      return `
+        <div class="node-body">
+          <textarea class="script" spellcheck="false" placeholder="$x -gt 5"></textarea>
+          <button class="run-node">Sprawdź warunek</button>
+          <pre class="output"></pre>
+        </div>`;
+    case "loop":
+      return `
+        <div class="node-body">
+          <select class="loop-mode">
+            <option value="count">Powtórz N razy</option>
+            <option value="foreach">Dla każdego</option>
+          </select>
+          <textarea class="script" spellcheck="false" placeholder="5   albo   Get-ChildItem *.txt"></textarea>
+          <label class="loop-var-label">Zmienna: $<input class="loop-var" /></label>
+          <button class="run-node">Podgląd iteracji</button>
+          <pre class="output"></pre>
+        </div>`;
+    case "comment":
+      return `
+        <div class="node-body">
+          <textarea class="script note" spellcheck="false" placeholder="Notatka..."></textarea>
+        </div>`;
+  }
+}
+
+function connectorsHtml(kind: NodeKind): string {
+  switch (kind) {
+    case "script":
+      return '<div class="conn out" data-branch="out" title="Wyjście"></div>';
+    case "condition":
+      return `
+        <div class="conn out out-true" data-branch="true" title="Tak"></div>
+        <div class="conn out out-false" data-branch="false" title="Nie"></div>`;
+    case "loop":
+      return `
+        <div class="conn out out-body" data-branch="body" title="Pętla"></div>
+        <div class="conn out out-done" data-branch="done" title="Po pętli"></div>`;
+    case "comment":
+      return "";
   }
 }
 
 function createNode(
   x: number,
   y: number,
-  initialScript = "",
-  options?: { id?: string; title?: string },
+  kind: NodeKind = "script",
+  options?: {
+    id?: string;
+    title?: string;
+    script?: string;
+    loopMode?: LoopMode;
+    loopVar?: string;
+  },
 ): NodeBlock {
   const id = options?.id ?? makeId("node");
   nodeSeq += 1;
 
   const el = document.createElement("div");
-  el.className = "node";
+  el.className = `node node-${kind}`;
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
   el.innerHTML = `
     <div class="node-header">
       <input class="title" />
-      <button class="run-node-btn" title="Uruchom">▶</button>
+      ${kind !== "comment" ? '<button class="run-node-btn" title="Uruchom">▶</button>' : ""}
       <button class="del-node-btn" title="Usuń">✕</button>
     </div>
-    <div class="node-body">
-      <textarea class="script" spellcheck="false" placeholder="Get-ChildItem"></textarea>
-      <button class="run-node">Uruchom blok</button>
-      <pre class="output"></pre>
-    </div>
-    <div class="conn in" title="Wejście"></div>
-    <div class="conn out" title="Wyjście"></div>
+    ${nodeBodyHtml(kind)}
+    ${kind !== "comment" ? '<div class="conn in" title="Wejście"></div>' : ""}
+    ${connectorsHtml(kind)}
   `;
   nodesLayer.appendChild(el);
 
   const titleInput = el.querySelector<HTMLInputElement>("input.title")!;
-  titleInput.value = options?.title ?? `Blok ${nodeSeq}`;
-  const scriptEl = el.querySelector<HTMLTextAreaElement>("textarea.script")!;
-  scriptEl.value = initialScript;
-  const outputEl = el.querySelector<HTMLPreElement>("pre.output")!;
-  const outConn = el.querySelector<HTMLDivElement>(".conn.out")!;
-  const inConn = el.querySelector<HTMLDivElement>(".conn.in")!;
-  const header = el.querySelector<HTMLDivElement>(".node-header")!;
-  const runBtns = el.querySelectorAll<HTMLButtonElement>(".run-node, .run-node-btn");
-  const delBtn = el.querySelector<HTMLButtonElement>(".del-node-btn")!;
+  titleInput.value = options?.title ?? `${kindLabel(kind)} ${nodeSeq}`;
 
-  const node: NodeBlock = { id, el, titleInput, scriptEl, outputEl, outConn, inConn, x, y };
+  const scriptEl = el.querySelector<HTMLTextAreaElement>("textarea.script") ?? undefined;
+  if (scriptEl) scriptEl.value = options?.script ?? "";
+
+  const outputEl = el.querySelector<HTMLPreElement>("pre.output") ?? undefined;
+  const inConn = el.querySelector<HTMLDivElement>(".conn.in") ?? undefined;
+
+  const outConns: Partial<Record<Branch, HTMLDivElement>> = {};
+  el.querySelectorAll<HTMLDivElement>(".conn.out").forEach((connEl) => {
+    const branch = (connEl.dataset.branch as Branch) ?? "out";
+    outConns[branch] = connEl;
+  });
+
+  const loopModeSelect = el.querySelector<HTMLSelectElement>("select.loop-mode") ?? undefined;
+  if (loopModeSelect) loopModeSelect.value = options?.loopMode ?? "count";
+  const loopVarInput = el.querySelector<HTMLInputElement>("input.loop-var") ?? undefined;
+  if (loopVarInput) loopVarInput.value = options?.loopVar ?? "i";
+
+  const header = el.querySelector<HTMLDivElement>(".node-header")!;
+  const delBtn = el.querySelector<HTMLButtonElement>(".del-node-btn")!;
+  const runBtns = el.querySelectorAll<HTMLButtonElement>(".run-node, .run-node-btn");
+
+  const node: NodeBlock = {
+    id,
+    kind,
+    el,
+    titleInput,
+    scriptEl,
+    loopModeSelect,
+    loopVarInput,
+    outputEl,
+    inConn,
+    outConns,
+    x,
+    y,
+  };
   nodes.set(id, node);
 
+  for (const [branch, connEl] of Object.entries(outConns)) {
+    connEl.addEventListener("mousedown", (e) => startConnectorDrag(e, node, branch as Branch));
+  }
+
   header.addEventListener("mousedown", (e) => startNodeDrag(e, node));
-  outConn.addEventListener("mousedown", (e) => startConnectorDrag(e, node));
-  runBtns.forEach((btn) => btn.addEventListener("click", () => runNode(node)));
+  runBtns.forEach((btn) => btn.addEventListener("click", () => void runNodePreview(node)));
   delBtn.addEventListener("click", () => deleteNode(node.id));
 
   const observer = new ResizeObserver(() => redrawEdges());
@@ -197,7 +337,7 @@ function deleteNode(id: string) {
 
 function startNodeDrag(e: MouseEvent, node: NodeBlock) {
   const target = e.target as HTMLElement;
-  if (target.closest("input, button")) return;
+  if (target.closest("input, button, select")) return;
   e.preventDefault();
 
   const start = localPoint(e.clientX, e.clientY);
@@ -220,20 +360,23 @@ function startNodeDrag(e: MouseEvent, node: NodeBlock) {
   document.addEventListener("mouseup", onUp);
 }
 
-function startConnectorDrag(e: MouseEvent, fromNode: NodeBlock) {
+function startConnectorDrag(e: MouseEvent, fromNode: NodeBlock, branch: Branch) {
   e.preventDefault();
   e.stopPropagation();
 
+  const fromEl = fromNode.outConns[branch];
+  if (!fromEl) return;
+
   const temp = document.createElementNS("http://www.w3.org/2000/svg", "path");
   temp.setAttribute("class", "edge");
-  temp.setAttribute("stroke", "#4ec9b0");
+  temp.setAttribute("stroke", edgeColor(branch));
   temp.setAttribute("stroke-dasharray", "4 3");
   temp.setAttribute("fill", "none");
   temp.setAttribute("stroke-width", "2");
   edgesLayer.appendChild(temp);
 
   function onMove(ev: MouseEvent) {
-    const p1 = connCenter(fromNode.outConn);
+    const p1 = connCenter(fromEl!);
     const p2 = localPoint(ev.clientX, ev.clientY);
     temp.setAttribute("d", edgePathD(p1.x, p1.y, p2.x, p2.y));
   }
@@ -248,8 +391,8 @@ function startConnectorDrag(e: MouseEvent, fromNode: NodeBlock) {
     if (inConn) {
       const targetEl = inConn.closest<HTMLDivElement>(".node");
       const targetNode = [...nodes.values()].find((n) => n.el === targetEl);
-      if (targetNode && targetNode.id !== fromNode.id) {
-        addEdge(fromNode.id, targetNode.id);
+      if (targetNode && targetNode.id !== fromNode.id && targetNode.inConn) {
+        addEdge(fromNode.id, targetNode.id, branch);
       }
     }
   }
@@ -258,18 +401,18 @@ function startConnectorDrag(e: MouseEvent, fromNode: NodeBlock) {
   document.addEventListener("mouseup", onUp);
 }
 
-function addEdge(fromId: string, toId: string) {
-  const exists = edges.some((e) => e.from === fromId && e.to === toId);
+function addEdge(fromId: string, toId: string, branch: Branch = "out") {
+  const exists = edges.some((e) => e.from === fromId && e.to === toId && e.branch === branch);
   if (exists) return;
 
   const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
   pathEl.setAttribute("class", "edge");
-  pathEl.setAttribute("stroke", "#569cd6");
+  pathEl.setAttribute("stroke", edgeColor(branch));
   pathEl.setAttribute("stroke-width", "2");
   pathEl.setAttribute("fill", "none");
   edgesLayer.appendChild(pathEl);
 
-  const edge: Edge = { id: makeId("edge"), from: fromId, to: toId, pathEl };
+  const edge: Edge = { id: makeId("edge"), from: fromId, to: toId, branch, pathEl };
   pathEl.addEventListener("click", () => removeEdge(edge.id));
   edges.push(edge);
   redrawEdges();
@@ -282,17 +425,17 @@ function removeEdge(id: string) {
   edges.splice(idx, 1);
 }
 
-function topoSort(): string[] | null {
+function hasCycle(): boolean {
   const inDegree = new Map<string, number>();
   for (const id of nodes.keys()) inDegree.set(id, 0);
   for (const edge of edges) inDegree.set(edge.to, (inDegree.get(edge.to) ?? 0) + 1);
 
   const queue: string[] = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id);
-  const order: string[] = [];
+  let visitedCount = 0;
 
   while (queue.length > 0) {
     const id = queue.shift()!;
-    order.push(id);
+    visitedCount += 1;
     for (const edge of edges.filter((e) => e.from === id)) {
       const d = (inDegree.get(edge.to) ?? 0) - 1;
       inDegree.set(edge.to, d);
@@ -300,47 +443,183 @@ function topoSort(): string[] | null {
     }
   }
 
-  return order.length === nodes.size ? order : null;
+  return visitedCount !== nodes.size;
 }
 
-async function runNode(node: NodeBlock) {
+async function runScriptNode(node: NodeBlock) {
   node.el.classList.remove("ok", "error");
   node.el.classList.add("running");
-  node.outputEl.textContent = "…";
+  node.outputEl!.textContent = "…";
   try {
-    const result = await executeScript(node.scriptEl.value);
+    const result = await executeScript(node.scriptEl!.value);
     node.el.classList.remove("running");
     const ok = result.code === 0 || result.code === null;
     node.el.classList.add(ok ? "ok" : "error");
-    node.outputEl.innerHTML = "";
+    node.outputEl!.innerHTML = "";
     if (result.stdout.trim()) {
-      node.outputEl.appendChild(document.createTextNode(result.stdout.trimEnd()));
+      node.outputEl!.appendChild(document.createTextNode(result.stdout.trimEnd()));
     }
     if (result.stderr.trim()) {
       const span = document.createElement("span");
       span.className = "stderr";
       span.textContent = (result.stdout.trim() ? "\n" : "") + result.stderr.trimEnd();
-      node.outputEl.appendChild(span);
+      node.outputEl!.appendChild(span);
     }
     if (!result.stdout.trim() && !result.stderr.trim()) {
-      node.outputEl.textContent = `(brak wyjścia, kod: ${result.code ?? "?"})`;
+      node.outputEl!.textContent = `(brak wyjścia, kod: ${result.code ?? "?"})`;
     }
   } catch (err) {
     node.el.classList.remove("running");
     node.el.classList.add("error");
-    node.outputEl.textContent = String(err);
+    node.outputEl!.textContent = String(err);
   }
 }
 
-async function runAll() {
-  const order = topoSort();
-  if (!order) {
+async function evalCondition(node: NodeBlock): Promise<boolean> {
+  node.el.classList.remove("ok", "error");
+  node.el.classList.add("running");
+  node.outputEl!.textContent = "…";
+  const expr = node.scriptEl?.value ?? "";
+  const wrapped = `if (${expr}) { Write-Output "SHELLCRAFT_TRUE" } else { Write-Output "SHELLCRAFT_FALSE" }`;
+  try {
+    const result = await executeScript(wrapped);
+    const isTrue = /SHELLCRAFT_TRUE/.test(result.stdout);
+    node.el.classList.remove("running");
+    node.el.classList.add(isTrue ? "ok" : "error");
+    node.outputEl!.textContent = isTrue ? "✓ TAK" : "✗ NIE";
+    return isTrue;
+  } catch (err) {
+    node.el.classList.remove("running");
+    node.el.classList.add("error");
+    node.outputEl!.textContent = String(err);
+    throw err;
+  }
+}
+
+async function resolveLoopItemsRaw(node: NodeBlock): Promise<string[]> {
+  const mode = (node.loopModeSelect?.value as LoopMode) ?? "count";
+  const expr = node.scriptEl?.value ?? "";
+
+  if (mode === "count") {
+    const result = await executeScript(`Write-Output (${expr})`);
+    const n = parseInt(result.stdout.trim(), 10);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error(`Nieprawidłowa liczba iteracji: "${result.stdout.trim()}"`);
+    }
+    if (n > MAX_LOOP_ITERATIONS) {
+      throw new Error(`Zbyt wiele iteracji (${n}), limit to ${MAX_LOOP_ITERATIONS}.`);
+    }
+    return Array.from({ length: n }, (_, i) => String(i));
+  }
+
+  const result = await executeScript(`${expr} | ForEach-Object { Write-Output $_ }`);
+  const items = result.stdout
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (items.length > MAX_LOOP_ITERATIONS) {
+    throw new Error(`Zbyt wiele iteracji (${items.length}), limit to ${MAX_LOOP_ITERATIONS}.`);
+  }
+  return items;
+}
+
+async function resolveLoopItems(node: NodeBlock): Promise<string[]> {
+  node.el.classList.remove("ok", "error");
+  node.el.classList.add("running");
+  node.outputEl!.textContent = "…";
+  try {
+    const items = await resolveLoopItemsRaw(node);
+    node.el.classList.remove("running");
+    node.el.classList.add("ok");
+    node.outputEl!.textContent = `${items.length} iteracji: ${items.slice(0, 20).join(", ")}${items.length > 20 ? "…" : ""}`;
+    return items;
+  } catch (err) {
+    node.el.classList.remove("running");
+    node.el.classList.add("error");
+    node.outputEl!.textContent = String(err);
+    throw err;
+  }
+}
+
+async function runNodePreview(node: NodeBlock) {
+  try {
+    switch (node.kind) {
+      case "script":
+        await runScriptNode(node);
+        break;
+      case "condition":
+        await evalCondition(node);
+        break;
+      case "loop":
+        await resolveLoopItems(node);
+        break;
+      case "comment":
+        break;
+    }
+  } catch {
+    // błąd już wyświetlony w treści węzła
+  }
+}
+
+async function continueTo(
+  nodeId: string,
+  branch: Branch,
+  executed: Set<string>,
+  callStack: Set<string>,
+): Promise<void> {
+  for (const edge of edges.filter((e) => e.from === nodeId && e.branch === branch)) {
+    await runFrom(edge.to, executed, callStack);
+  }
+}
+
+async function runFrom(nodeId: string, executed: Set<string>, callStack: Set<string>): Promise<void> {
+  if (executed.has(nodeId)) return;
+  if (callStack.has(nodeId)) {
+    throw new Error("Wykryto nieoczekiwany cykl podczas wykonania grafu.");
+  }
+  const node = nodes.get(nodeId);
+  if (!node) return;
+
+  callStack.add(nodeId);
+  executed.add(nodeId);
+
+  if (node.kind === "script") {
+    await runScriptNode(node);
+    await continueTo(nodeId, "out", executed, callStack);
+  } else if (node.kind === "condition") {
+    const isTrue = await evalCondition(node);
+    await continueTo(nodeId, isTrue ? "true" : "false", executed, callStack);
+  } else if (node.kind === "loop") {
+    const varName = node.loopVarInput?.value.trim() || "i";
+    const items = await resolveLoopItems(node);
+    for (const item of items) {
+      await executeScript(`$${varName} = '${item.replace(/'/g, "''")}'`);
+      const bodyExecuted = new Set<string>();
+      await continueTo(nodeId, "body", bodyExecuted, callStack);
+    }
+    await continueTo(nodeId, "done", executed, callStack);
+  }
+
+  callStack.delete(nodeId);
+}
+
+async function runGraph() {
+  if (hasCycle()) {
     alert("Wykryto cykl w grafie — nie można uruchomić.");
     return;
   }
-  for (const id of order) {
-    const node = nodes.get(id);
-    if (node) await runNode(node);
+
+  const hasIncoming = new Set(edges.map((e) => e.to));
+  const roots = [...nodes.keys()].filter((id) => !hasIncoming.has(id) && nodes.get(id)!.kind !== "comment");
+
+  const executed = new Set<string>();
+  const callStack = new Set<string>();
+  for (const rootId of roots) {
+    try {
+      await runFrom(rootId, executed, callStack);
+    } catch {
+      // błąd już wyświetlony na węźle, który go wyrzucił — przechodzimy do kolejnego korzenia
+    }
   }
 }
 
@@ -354,12 +633,15 @@ function serializeGraph(): SavedGraph {
   return {
     nodes: [...nodes.values()].map((n) => ({
       id: n.id,
+      kind: n.kind,
       x: n.x,
       y: n.y,
       title: n.titleInput.value,
-      script: n.scriptEl.value,
+      script: n.scriptEl?.value ?? "",
+      loopMode: n.loopModeSelect?.value as LoopMode | undefined,
+      loopVar: n.loopVarInput?.value,
     })),
-    edges: edges.map((e) => ({ from: e.from, to: e.to })),
+    edges: edges.map((e) => ({ from: e.from, to: e.to, branch: e.branch })),
   };
 }
 
@@ -378,10 +660,16 @@ function loadGraph(data: SavedGraph) {
   for (const id of [...nodes.keys()]) deleteNode(id);
 
   for (const n of data.nodes) {
-    createNode(n.x, n.y, n.script, { id: n.id, title: n.title });
+    createNode(n.x, n.y, n.kind ?? "script", {
+      id: n.id,
+      title: n.title,
+      script: n.script,
+      loopMode: n.loopMode,
+      loopVar: n.loopVar,
+    });
   }
   for (const e of data.edges) {
-    if (nodes.has(e.from) && nodes.has(e.to)) addEdge(e.from, e.to);
+    if (nodes.has(e.from) && nodes.has(e.to)) addEdge(e.from, e.to, e.branch ?? "out");
   }
   redrawEdges();
 }
@@ -441,13 +729,18 @@ function setupAgentPanel() {
   if (getAgentToken()) void refreshStatus();
 }
 
+function addNodeAt(kind: NodeKind) {
+  const scroll = { left: canvasWrap.scrollLeft, top: canvasWrap.scrollTop };
+  createNode(60 + scroll.left + (nodes.size % 5) * 20, 60 + scroll.top + (nodes.size % 5) * 20, kind);
+}
+
 window.addEventListener("resize", redrawEdges);
 
-document.querySelector("#add-node")?.addEventListener("click", () => {
-  const scroll = { left: canvasWrap.scrollLeft, top: canvasWrap.scrollTop };
-  createNode(60 + scroll.left + (nodes.size % 5) * 20, 60 + scroll.top + (nodes.size % 5) * 20);
-});
-document.querySelector("#run-all")?.addEventListener("click", () => void runAll());
+document.querySelector("#add-script")?.addEventListener("click", () => addNodeAt("script"));
+document.querySelector("#add-condition")?.addEventListener("click", () => addNodeAt("condition"));
+document.querySelector("#add-loop")?.addEventListener("click", () => addNodeAt("loop"));
+document.querySelector("#add-comment")?.addEventListener("click", () => addNodeAt("comment"));
+document.querySelector("#run-all")?.addEventListener("click", () => void runGraph());
 document.querySelector("#clear-all")?.addEventListener("click", clearAll);
 document.querySelector("#restart-session")?.addEventListener("click", () => {
   if (!confirm("Zrestartować sesję PowerShell? Wszystkie zmienne zostaną utracone.")) return;
@@ -463,4 +756,4 @@ loadInput.addEventListener("change", () => {
 });
 
 setupAgentPanel();
-createNode(60, 60, "Get-Date");
+createNode(60, 60, "script", { script: "Get-Date" });
