@@ -56,6 +56,7 @@ fn with_cors<R: Read>(mut resp: Response<R>, origin: &str) -> Response<R> {
         "Access-Control-Allow-Headers",
         "Content-Type, X-ShellCraft-Token",
     ));
+    resp.add_header(header("Access-Control-Allow-Private-Network", "true"));
     resp.add_header(header("Access-Control-Max-Age", "600"));
     resp
 }
