@@ -897,6 +897,38 @@ function renderTemplates() {
   }
 }
 
+const BLOCK_TYPES: { kind: NodeKind; label: string }[] = [
+  { kind: "script", label: "Skrypt" },
+  { kind: "condition", label: "Warunek" },
+  { kind: "loop", label: "Pętla" },
+  { kind: "comment", label: "Notatka" },
+];
+
+function renderBlockTypes() {
+  const list = document.querySelector<HTMLDivElement>("#blocks-list")!;
+  list.innerHTML = "";
+  for (const bt of BLOCK_TYPES) {
+    const card = document.createElement("div");
+    card.className = "block-type";
+    card.textContent = bt.label;
+    card.addEventListener("click", () => addNodeAt(bt.kind));
+    list.appendChild(card);
+  }
+}
+
+function setupSideTabs() {
+  const tabs = document.querySelectorAll<HTMLButtonElement>(".side-tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      document.querySelectorAll<HTMLElement>("#sidebar-templates .side-panel-body").forEach((body) => {
+        body.hidden = body.id !== tab.dataset.panel;
+      });
+    });
+  });
+}
+
 function loadPanelSizes(): Record<string, number> {
   try {
     return JSON.parse(localStorage.getItem(PANEL_SIZES_KEY) ?? "{}");
@@ -1185,10 +1217,6 @@ canvasWrap.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
-document.querySelector("#add-script")?.addEventListener("click", () => addNodeAt("script"));
-document.querySelector("#add-condition")?.addEventListener("click", () => addNodeAt("condition"));
-document.querySelector("#add-loop")?.addEventListener("click", () => addNodeAt("loop"));
-document.querySelector("#add-comment")?.addEventListener("click", () => addNodeAt("comment"));
 document.querySelector("#run-all")?.addEventListener("click", () => void runGraph());
 document.querySelector("#clear-all")?.addEventListener("click", clearAll);
 document.querySelector("#restart-session")?.addEventListener("click", () => {
@@ -1215,6 +1243,8 @@ document.querySelector("#clear-console")?.addEventListener("click", () => {
 
 setupAgentPanel();
 renderTemplates();
+renderBlockTypes();
+setupSideTabs();
 setupResizableSidePanel("#sidebar-templates", 220);
 setupResizableSidePanel("#sidebar-inspector", 280);
 setupResizableBottomPanel("#console-panel", 70);

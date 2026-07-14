@@ -14,14 +14,6 @@
         <span class="brand">ShellCraft</span>
 
         <div class="toolbar-group">
-          <button id="add-script">+ Skrypt</button>
-          <button id="add-condition">+ Warunek</button>
-          <button id="add-loop">+ Pętla</button>
-          <button id="add-comment">+ Notatka</button>
-        </div>
-        <span class="toolbar-sep"></span>
-
-        <div class="toolbar-group">
           <button id="run-all">▶ Uruchom graf</button>
           <button id="clear-all">Wyczyść</button>
           <button id="restart-session" title="Restartuje sesję PowerShell — traci wszystkie zmienne">🔄 Nowa sesja</button>
@@ -44,8 +36,12 @@
 
       <div id="main-area">
         <aside id="sidebar-templates" class="side-panel">
-          <div class="side-panel-header">Szablony OSINT</div>
+          <div class="side-tabs">
+            <button class="side-tab active" data-panel="templates-list">Szablony OSINT</button>
+            <button class="side-tab" data-panel="blocks-list">Bloki</button>
+          </div>
           <div id="templates-list" class="side-panel-body"></div>
+          <div id="blocks-list" class="side-panel-body" hidden></div>
         </aside>
         <div class="resize-handle resize-handle-v" data-resize="sidebar-templates" data-grow="1"></div>
 
