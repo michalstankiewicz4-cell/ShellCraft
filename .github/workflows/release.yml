@@ -1,0 +1,56 @@
+name: Build and publish release artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - run: npm run tauri build
+
+      - name: Build web agent
+        working-directory: src-tauri
+        run: cargo build --release --bin agent
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item src-tauri/target/release/shellcraft.exe release-assets/shellcraft.exe
+          Copy-Item src-tauri/target/release/agent.exe release-assets/agent.exe
+          Copy-Item (Get-Item src-tauri/target/release/bundle/nsis/*-setup.exe).FullName release-assets/shellcraft-setup.exe
+          Copy-Item (Get-Item src-tauri/target/release/bundle/msi/*.msi).FullName release-assets/shellcraft.msi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          body: |
+            ## Pobierz
+
+            - **shellcraft-setup.exe** / **shellcraft.msi** — instalator aplikacji desktopowej (polecane). Dodaje skrót w Menu Start, sam doinstaluje WebView2 jeśli brakuje.
+            - **shellcraft.exe** — ta sama aplikacja jako pojedynczy, przenośny plik (bez instalacji). Wymaga WebView2 (zwykle już jest na aktualnym Windows 10/11).
+            - **agent.exe** — lokalny agent do trybu przeglądarkowego (https://michalstankiewicz4-cell.github.io/ShellCraft/). Uruchom go lokalnie, wklej wypisany token na stronie. Zobacz README, sekcja "Opcja B".
+
+            Windows SmartScreen może ostrzec przy pierwszym uruchomieniu (pliki są niepodpisane certyfikatem) — kliknij "Więcej informacji" → "Uruchom mimo to".
+          generate_release_notes: true

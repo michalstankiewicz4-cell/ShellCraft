@@ -73,6 +73,17 @@ npx vite preview --outDir dist-pages --base /ShellCraft/
 
 Strona na GitHub Pages wdraża się automatycznie (`.github/workflows/deploy-pages.yml`) po każdym pushu do `main`.
 
+## Wydawanie nowej wersji
+
+Wypchnięcie tagu `vX.Y.Z` automatycznie buduje wszystkie cztery artefakty (`shellcraft.exe`, `shellcraft-setup.exe`, `shellcraft.msi`, `agent.exe`) i publikuje je jako GitHub Release (`.github/workflows/release.yml`):
+
+```bash
+git tag -a v0.2.0 -m "ShellCraft v0.2.0"
+git push origin v0.2.0
+```
+
+Pliki nie są podpisane certyfikatem code-signing (Windows SmartScreen pokaże ostrzeżenie przy pierwszym uruchomieniu) — to świadomy kompromis, certyfikat kosztuje i wymaga weryfikacji tożsamości.
+
 ## Znane ograniczenia / dalszy rozwój
 
 - Brak twardego przerwania pojedynczego zawieszonego bloku (np. nieskończonej pętli) — trzeba zrestartować całą sesję przyciskiem "Nowa sesja".
