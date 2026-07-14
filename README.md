@@ -42,6 +42,7 @@ Przeglądarka **nie może** sama uruchamiać PowerShell na Twoim komputerze — 
 - Pojedynczy blok ma limit **120 sekund** — jeśli go przekroczy (np. nieskończona pętla), zwróci błąd timeoutu. W takim wypadku sesja może zostać zawieszona (blokuje kolejne bloki) — użyj przycisku "🔄 Nowa sesja", żeby wymusić restart procesu PowerShell (traci wszystkie zmienne, ale odblokowuje dalszą pracę). Twardego przerwania pojedynczego zawieszonego bloku w locie na razie nie ma.
 - Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf" (sortowanie topologiczne, wykrywanie cykli).
 - Kliknięcie na linię połączenia usuwa je.
+- "💾 Zapisz" pobiera cały graf (bloki, pozycje, treść skryptów, połączenia — bez wyników) jako plik `.json`. "📂 Wczytaj" wczytuje taki plik z powrotem, zastępując bieżący graf.
 
 ## Model bezpieczeństwa trybu web
 
@@ -87,5 +88,4 @@ Pliki nie są podpisane certyfikatem code-signing (Windows SmartScreen pokaże o
 ## Znane ograniczenia / dalszy rozwój
 
 - Brak twardego przerwania pojedynczego zawieszonego bloku (np. nieskończonej pętli) — trzeba zrestartować całą sesję przyciskiem "Nowa sesja".
-- Brak zapisu/wczytywania grafu (na razie stan istnieje tylko w pamięci okna).
 - Brak typów węzłów poza "surowy skrypt PowerShell" (np. węzły warunkowe, pętle, zmienne wejścia/wyjścia między blokami).

@@ -71,12 +71,18 @@ async function restartSession(): Promise<void> {
 interface NodeBlock {
   id: string;
   el: HTMLDivElement;
+  titleInput: HTMLInputElement;
   scriptEl: HTMLTextAreaElement;
   outputEl: HTMLPreElement;
   outConn: HTMLDivElement;
   inConn: HTMLDivElement;
   x: number;
   y: number;
+}
+
+interface SavedGraph {
+  nodes: { id: string; x: number; y: number; title: string; script: string }[];
+  edges: { from: string; to: string }[];
 }
 
 interface Edge {
@@ -125,8 +131,13 @@ function redrawEdges() {
   }
 }
 
-function createNode(x: number, y: number, initialScript = ""): NodeBlock {
-  const id = makeId("node");
+function createNode(
+  x: number,
+  y: number,
+  initialScript = "",
+  options?: { id?: string; title?: string },
+): NodeBlock {
+  const id = options?.id ?? makeId("node");
   nodeSeq += 1;
 
   const el = document.createElement("div");
@@ -135,7 +146,7 @@ function createNode(x: number, y: number, initialScript = ""): NodeBlock {
   el.style.top = `${y}px`;
   el.innerHTML = `
     <div class="node-header">
-      <input class="title" value="Blok ${nodeSeq}" />
+      <input class="title" />
       <button class="run-node-btn" title="Uruchom">▶</button>
       <button class="del-node-btn" title="Usuń">✕</button>
     </div>
@@ -149,6 +160,8 @@ function createNode(x: number, y: number, initialScript = ""): NodeBlock {
   `;
   nodesLayer.appendChild(el);
 
+  const titleInput = el.querySelector<HTMLInputElement>("input.title")!;
+  titleInput.value = options?.title ?? `Blok ${nodeSeq}`;
   const scriptEl = el.querySelector<HTMLTextAreaElement>("textarea.script")!;
   scriptEl.value = initialScript;
   const outputEl = el.querySelector<HTMLPreElement>("pre.output")!;
@@ -158,7 +171,7 @@ function createNode(x: number, y: number, initialScript = ""): NodeBlock {
   const runBtns = el.querySelectorAll<HTMLButtonElement>(".run-node, .run-node-btn");
   const delBtn = el.querySelector<HTMLButtonElement>(".del-node-btn")!;
 
-  const node: NodeBlock = { id, el, scriptEl, outputEl, outConn, inConn, x, y };
+  const node: NodeBlock = { id, el, titleInput, scriptEl, outputEl, outConn, inConn, x, y };
   nodes.set(id, node);
 
   header.addEventListener("mousedown", (e) => startNodeDrag(e, node));
@@ -337,6 +350,60 @@ function clearAll() {
   for (const id of [...nodes.keys()]) deleteNode(id);
 }
 
+function serializeGraph(): SavedGraph {
+  return {
+    nodes: [...nodes.values()].map((n) => ({
+      id: n.id,
+      x: n.x,
+      y: n.y,
+      title: n.titleInput.value,
+      script: n.scriptEl.value,
+    })),
+    edges: edges.map((e) => ({ from: e.from, to: e.to })),
+  };
+}
+
+function saveGraph() {
+  const json = JSON.stringify(serializeGraph(), null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "shellcraft-graph.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function loadGraph(data: SavedGraph) {
+  for (const id of [...nodes.keys()]) deleteNode(id);
+
+  for (const n of data.nodes) {
+    createNode(n.x, n.y, n.script, { id: n.id, title: n.title });
+  }
+  for (const e of data.edges) {
+    if (nodes.has(e.from) && nodes.has(e.to)) addEdge(e.from, e.to);
+  }
+  redrawEdges();
+}
+
+async function loadGraphFromFile(file: File) {
+  let data: SavedGraph;
+  try {
+    const text = await file.text();
+    data = JSON.parse(text);
+    if (!Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+      throw new Error("Nieprawidłowa struktura pliku.");
+    }
+  } catch (err) {
+    alert(`Nie udało się wczytać grafu: ${String(err)}`);
+    return;
+  }
+  if (nodes.size > 0 && !confirm("Wczytanie grafu zastąpi obecne bloki i połączenia. Kontynuować?")) {
+    return;
+  }
+  loadGraph(data);
+}
+
 function setupAgentPanel() {
   const hintEl = document.querySelector<HTMLSpanElement>("#hint")!;
   if (desktopMode) {
@@ -385,6 +452,14 @@ document.querySelector("#clear-all")?.addEventListener("click", clearAll);
 document.querySelector("#restart-session")?.addEventListener("click", () => {
   if (!confirm("Zrestartować sesję PowerShell? Wszystkie zmienne zostaną utracone.")) return;
   void restartSession().catch((err) => alert(String(err)));
+});
+document.querySelector("#save-graph")?.addEventListener("click", saveGraph);
+const loadInput = document.querySelector<HTMLInputElement>("#load-graph-input")!;
+document.querySelector("#load-graph")?.addEventListener("click", () => loadInput.click());
+loadInput.addEventListener("change", () => {
+  const file = loadInput.files?.[0];
+  if (file) void loadGraphFromFile(file);
+  loadInput.value = "";
 });
 
 setupAgentPanel();
