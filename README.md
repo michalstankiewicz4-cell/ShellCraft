@@ -43,6 +43,7 @@ Przeglądarka **nie może** sama uruchamiać PowerShell na Twoim komputerze — 
 - Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf".
 - Kliknięcie na linię połączenia usuwa je.
 - "💾 Zapisz" pobiera cały graf (bloki, pozycje, treść skryptów, połączenia — bez wyników) jako plik `.json`. "📂 Wczytaj" wczytuje taki plik z powrotem, zastępując bieżący graf.
+- Graf zapisuje się też automatycznie do `localStorage` przeglądarki (bez klikania czegokolwiek) i wraca po odświeżeniu strony lub ponownym otwarciu aplikacji — plik `.json` służy do trwałej kopii/dzielenia się grafem, autozapis chroni przed przypadkową utratą bieżącej pracy.
 
 ### Typy węzłów
 

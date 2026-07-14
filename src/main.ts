@@ -12,8 +12,18 @@ type LoopMode = "count" | "foreach";
 
 const AGENT_URL = "http://127.0.0.1:47932";
 const TOKEN_KEY = "shellcraft-agent-token";
+const AUTOSAVE_KEY = "shellcraft-autosave";
 const desktopMode = isTauri();
 const MAX_LOOP_ITERATIONS = 1000;
+
+let autosaveTimer: number | undefined;
+
+function scheduleAutosave() {
+  if (autosaveTimer !== undefined) window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeGraph()));
+  }, 400);
+}
 
 function getAgentToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? "";
@@ -319,9 +329,15 @@ function createNode(
   runBtns.forEach((btn) => btn.addEventListener("click", () => void runNodePreview(node)));
   delBtn.addEventListener("click", () => deleteNode(node.id));
 
+  titleInput.addEventListener("input", scheduleAutosave);
+  scriptEl?.addEventListener("input", scheduleAutosave);
+  loopModeSelect?.addEventListener("change", scheduleAutosave);
+  loopVarInput?.addEventListener("input", scheduleAutosave);
+
   const observer = new ResizeObserver(() => redrawEdges());
   observer.observe(el);
 
+  scheduleAutosave();
   return node;
 }
 
@@ -333,6 +349,7 @@ function deleteNode(id: string) {
   }
   node.el.remove();
   nodes.delete(id);
+  scheduleAutosave();
 }
 
 function startNodeDrag(e: MouseEvent, node: NodeBlock) {
@@ -355,6 +372,7 @@ function startNodeDrag(e: MouseEvent, node: NodeBlock) {
   function onUp() {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    scheduleAutosave();
   }
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -416,6 +434,7 @@ function addEdge(fromId: string, toId: string, branch: Branch = "out") {
   pathEl.addEventListener("click", () => removeEdge(edge.id));
   edges.push(edge);
   redrawEdges();
+  scheduleAutosave();
 }
 
 function removeEdge(id: string) {
@@ -423,6 +442,7 @@ function removeEdge(id: string) {
   if (idx === -1) return;
   edges[idx].pathEl.remove();
   edges.splice(idx, 1);
+  scheduleAutosave();
 }
 
 function hasCycle(): boolean {
@@ -755,5 +775,21 @@ loadInput.addEventListener("change", () => {
   loadInput.value = "";
 });
 
+function loadAutosaveOrDefault() {
+  const raw = localStorage.getItem(AUTOSAVE_KEY);
+  if (raw) {
+    try {
+      const data = JSON.parse(raw) as SavedGraph;
+      if (Array.isArray(data.nodes) && Array.isArray(data.edges) && data.nodes.length > 0) {
+        loadGraph(data);
+        return;
+      }
+    } catch {
+      // uszkodzony autozapis — ignorujemy i wracamy do domyślnego stanu
+    }
+  }
+  createNode(60, 60, "script", { script: "Get-Date" });
+}
+
 setupAgentPanel();
-createNode(60, 60, "script", { script: "Get-Date" });
+loadAutosaveOrDefault();
