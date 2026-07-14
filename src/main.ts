@@ -12,17 +12,56 @@ type LoopMode = "count" | "foreach";
 
 const AGENT_URL = "http://127.0.0.1:47932";
 const TOKEN_KEY = "shellcraft-agent-token";
-const AUTOSAVE_KEY = "shellcraft-autosave";
+const LEGACY_AUTOSAVE_KEY = "shellcraft-autosave";
+const WORKSPACES_KEY = "shellcraft-workspaces";
+const ACTIVE_WORKSPACE_KEY = "shellcraft-active-workspace";
+const PANEL_SIZES_KEY = "shellcraft-panel-sizes";
 const desktopMode = isTauri();
 const MAX_LOOP_ITERATIONS = 1000;
+
+interface Workspace {
+  id: string;
+  name: string;
+}
+
+let workspaces: Workspace[] = [];
+let activeWorkspaceId = "";
+
+function workspaceAutosaveKey(id: string): string {
+  return `shellcraft-autosave-${id}`;
+}
 
 let autosaveTimer: number | undefined;
 
 function scheduleAutosave() {
   if (autosaveTimer !== undefined) window.clearTimeout(autosaveTimer);
   autosaveTimer = window.setTimeout(() => {
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeGraph()));
+    localStorage.setItem(workspaceAutosaveKey(activeWorkspaceId), JSON.stringify(serializeGraph()));
   }, 400);
+}
+
+type ConsoleStatus = "ok" | "error" | "info";
+
+const consoleLogEl = document.querySelector<HTMLDivElement>("#console-log")!;
+
+function logToConsole(title: string, status: ConsoleStatus, text: string) {
+  const div = document.createElement("div");
+  div.className = `console-entry status-${status}`;
+
+  const timeSpan = document.createElement("span");
+  timeSpan.className = "console-time";
+  timeSpan.textContent = new Date().toLocaleTimeString();
+
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "console-title";
+  titleSpan.textContent = title;
+
+  div.appendChild(timeSpan);
+  div.appendChild(titleSpan);
+  div.appendChild(document.createTextNode(text));
+
+  consoleLogEl.appendChild(div);
+  consoleLogEl.scrollTop = consoleLogEl.scrollHeight;
 }
 
 function getAgentToken(): string {
@@ -171,7 +210,23 @@ function edgeColor(branch: Branch): string {
   }
 }
 
+function updateCanvasSize() {
+  let maxX = canvasWrap.clientWidth || 800;
+  let maxY = canvasWrap.clientHeight || 600;
+  for (const node of nodes.values()) {
+    const w = node.el.offsetWidth || 280;
+    const h = node.el.offsetHeight || 120;
+    maxX = Math.max(maxX, node.x + w + 100);
+    maxY = Math.max(maxY, node.y + h + 100);
+  }
+  nodesLayer.style.width = `${maxX}px`;
+  nodesLayer.style.height = `${maxY}px`;
+  edgesLayer.style.width = `${maxX}px`;
+  edgesLayer.style.height = `${maxY}px`;
+}
+
 function redrawEdges() {
+  updateCanvasSize();
   for (const edge of edges) {
     const from = nodes.get(edge.from);
     const to = nodes.get(edge.to);
@@ -328,6 +383,11 @@ function createNode(
   header.addEventListener("mousedown", (e) => startNodeDrag(e, node));
   runBtns.forEach((btn) => btn.addEventListener("click", () => void runNodePreview(node)));
   delBtn.addEventListener("click", () => deleteNode(node.id));
+  el.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("input, button, select")) return;
+    selectNode(node.id);
+  });
 
   titleInput.addEventListener("input", scheduleAutosave);
   scriptEl?.addEventListener("input", scheduleAutosave);
@@ -349,6 +409,10 @@ function deleteNode(id: string) {
   }
   node.el.remove();
   nodes.delete(id);
+  if (selectedNodeId === id) {
+    selectedNodeId = null;
+    renderInspector();
+  }
   scheduleAutosave();
 }
 
@@ -488,10 +552,16 @@ async function runScriptNode(node: NodeBlock) {
     if (!result.stdout.trim() && !result.stderr.trim()) {
       node.outputEl!.textContent = `(brak wyjścia, kod: ${result.code ?? "?"})`;
     }
+    logToConsole(
+      node.titleInput.value,
+      ok ? "ok" : "error",
+      result.stdout.trim() || result.stderr.trim() || `(brak wyjścia, kod: ${result.code ?? "?"})`,
+    );
   } catch (err) {
     node.el.classList.remove("running");
     node.el.classList.add("error");
     node.outputEl!.textContent = String(err);
+    logToConsole(node.titleInput.value, "error", String(err));
   }
 }
 
@@ -507,11 +577,13 @@ async function evalCondition(node: NodeBlock): Promise<boolean> {
     node.el.classList.remove("running");
     node.el.classList.add(isTrue ? "ok" : "error");
     node.outputEl!.textContent = isTrue ? "✓ TAK" : "✗ NIE";
+    logToConsole(node.titleInput.value, "info", isTrue ? "warunek: TAK" : "warunek: NIE");
     return isTrue;
   } catch (err) {
     node.el.classList.remove("running");
     node.el.classList.add("error");
     node.outputEl!.textContent = String(err);
+    logToConsole(node.titleInput.value, "error", String(err));
     throw err;
   }
 }
@@ -552,11 +624,13 @@ async function resolveLoopItems(node: NodeBlock): Promise<string[]> {
     node.el.classList.remove("running");
     node.el.classList.add("ok");
     node.outputEl!.textContent = `${items.length} iteracji: ${items.slice(0, 20).join(", ")}${items.length > 20 ? "…" : ""}`;
+    logToConsole(node.titleInput.value, "info", `pętla: ${items.length} iteracji`);
     return items;
   } catch (err) {
     node.el.classList.remove("running");
     node.el.classList.add("error");
     node.outputEl!.textContent = String(err);
+    logToConsole(node.titleInput.value, "error", String(err));
     throw err;
   }
 }
@@ -578,6 +652,79 @@ async function runNodePreview(node: NodeBlock) {
     }
   } catch {
     // błąd już wyświetlony w treści węzła
+  }
+}
+
+let selectedNodeId: string | null = null;
+let inspectorObserver: MutationObserver | null = null;
+
+function selectNode(id: string) {
+  const prev = selectedNodeId ? nodes.get(selectedNodeId) : undefined;
+  prev?.el.classList.remove("selected");
+
+  selectedNodeId = id;
+  const node = nodes.get(id);
+  node?.el.classList.add("selected");
+
+  renderInspector();
+}
+
+function renderInspector() {
+  inspectorObserver?.disconnect();
+  inspectorObserver = null;
+
+  const content = document.querySelector<HTMLDivElement>("#inspector-content")!;
+  content.innerHTML = "";
+
+  const node = selectedNodeId ? nodes.get(selectedNodeId) : undefined;
+  if (!node) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "inspector-placeholder";
+    placeholder.textContent = "Zaznacz blok, aby zobaczyć szczegóły.";
+    content.appendChild(placeholder);
+    return;
+  }
+
+  const titleEl = document.createElement("input");
+  titleEl.className = "insp-title";
+  titleEl.value = node.titleInput.value;
+  titleEl.addEventListener("input", () => {
+    node.titleInput.value = titleEl.value;
+    scheduleAutosave();
+  });
+  content.appendChild(titleEl);
+
+  if (node.scriptEl) {
+    const scriptArea = document.createElement("textarea");
+    scriptArea.className = "insp-script";
+    scriptArea.spellcheck = false;
+    scriptArea.value = node.scriptEl.value;
+    scriptArea.addEventListener("input", () => {
+      node.scriptEl!.value = scriptArea.value;
+      scheduleAutosave();
+    });
+    node.scriptEl.addEventListener("input", () => {
+      if (scriptArea.value !== node.scriptEl!.value) scriptArea.value = node.scriptEl!.value;
+    });
+    content.appendChild(scriptArea);
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "insp-run";
+    runBtn.textContent = "Uruchom";
+    runBtn.addEventListener("click", () => void runNodePreview(node));
+    content.appendChild(runBtn);
+  }
+
+  const outputEl = document.createElement("pre");
+  outputEl.className = "insp-output";
+  outputEl.textContent = node.outputEl?.textContent ?? "";
+  content.appendChild(outputEl);
+
+  if (node.outputEl) {
+    inspectorObserver = new MutationObserver(() => {
+      outputEl.textContent = node.outputEl!.textContent ?? "";
+    });
+    inspectorObserver.observe(node.outputEl, { childList: true, characterData: true, subtree: true });
   }
 }
 
@@ -629,6 +776,8 @@ async function runGraph() {
     return;
   }
 
+  logToConsole("Graf", "info", "Uruchamianie grafu...");
+
   const hasIncoming = new Set(edges.map((e) => e.to));
   const roots = [...nodes.keys()].filter((id) => !hasIncoming.has(id) && nodes.get(id)!.kind !== "comment");
 
@@ -641,6 +790,8 @@ async function runGraph() {
       // błąd już wyświetlony na węźle, który go wyrzucił — przechodzimy do kolejnego korzenia
     }
   }
+
+  logToConsole("Graf", "info", "Zakończono uruchamianie grafu.");
 }
 
 function clearAll() {
@@ -712,6 +863,260 @@ async function loadGraphFromFile(file: File) {
   loadGraph(data);
 }
 
+const OSINT_TEMPLATES: { title: string; script: string }[] = [
+  { title: "Rozwiąż DNS", script: "Resolve-DnsName example.com" },
+  { title: "Sprawdź port", script: "Test-NetConnection -ComputerName example.com -Port 443" },
+  { title: "Geolokalizacja IP", script: 'Invoke-RestMethod "http://ip-api.com/json/8.8.8.8"' },
+  { title: "Nagłówki HTTP", script: '(Invoke-WebRequest -Uri "https://example.com" -Method Head).Headers' },
+  { title: "WHOIS (RDAP)", script: 'Invoke-RestMethod "https://rdap.org/domain/example.com"' },
+  { title: "Traceroute", script: "Test-NetConnection -ComputerName example.com -TraceRoute" },
+];
+
+function renderTemplates() {
+  const list = document.querySelector<HTMLDivElement>("#templates-list")!;
+  list.innerHTML = "";
+  for (const tpl of OSINT_TEMPLATES) {
+    const card = document.createElement("div");
+    card.className = "osint-template";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "osint-title";
+    titleEl.textContent = tpl.title;
+
+    const scriptEl = document.createElement("div");
+    scriptEl.className = "osint-script";
+    scriptEl.textContent = tpl.script;
+
+    card.appendChild(titleEl);
+    card.appendChild(scriptEl);
+    card.addEventListener("click", () => {
+      const scroll = { left: canvasWrap.scrollLeft, top: canvasWrap.scrollTop };
+      createNode(60 + scroll.left, 60 + scroll.top, "script", { title: tpl.title, script: tpl.script });
+    });
+    list.appendChild(card);
+  }
+}
+
+function loadPanelSizes(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(PANEL_SIZES_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function savePanelSize(key: string, size: number) {
+  const sizes = loadPanelSizes();
+  sizes[key] = size;
+  localStorage.setItem(PANEL_SIZES_KEY, JSON.stringify(sizes));
+}
+
+function setupResizableSidePanel(panelId: string, defaultWidth: number) {
+  const panel = document.querySelector<HTMLElement>(panelId)!;
+  const handle = document.querySelector<HTMLElement>(`.resize-handle[data-resize="${panelId.slice(1)}"]`)!;
+  const grow = Number(handle.dataset.grow) as 1 | -1;
+
+  let width = loadPanelSizes()[panelId] ?? defaultWidth;
+  panel.style.flexBasis = `${width}px`;
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = width;
+    handle.classList.add("dragging");
+
+    function onMove(ev: MouseEvent) {
+      const delta = (ev.clientX - startX) * grow;
+      width = Math.max(0, Math.min(600, startWidth + delta));
+      panel.style.flexBasis = `${width}px`;
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      handle.classList.remove("dragging");
+      savePanelSize(panelId, width);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+
+  handle.addEventListener("dblclick", () => {
+    width = width > 20 ? 0 : defaultWidth;
+    panel.style.flexBasis = `${width}px`;
+    savePanelSize(panelId, width);
+  });
+}
+
+function setupResizableBottomPanel(panelId: string, defaultHeight: number) {
+  const panel = document.querySelector<HTMLElement>(panelId)!;
+  const handle = document.querySelector<HTMLElement>(`.resize-handle[data-resize="${panelId.slice(1)}"]`)!;
+
+  let height = loadPanelSizes()[panelId] ?? defaultHeight;
+  panel.style.flexBasis = `${height}px`;
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = height;
+    handle.classList.add("dragging");
+
+    function onMove(ev: MouseEvent) {
+      const delta = startY - ev.clientY;
+      height = Math.max(0, Math.min(600, startHeight + delta));
+      panel.style.flexBasis = `${height}px`;
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      handle.classList.remove("dragging");
+      savePanelSize(panelId, height);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+
+  handle.addEventListener("dblclick", () => {
+    height = height > 20 ? 0 : defaultHeight;
+    panel.style.flexBasis = `${height}px`;
+    savePanelSize(panelId, height);
+  });
+}
+
+function loadWorkspaceList(): Workspace[] {
+  try {
+    const raw = localStorage.getItem(WORKSPACES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // ignore corrupt data, treat as no saved workspaces
+  }
+  return [];
+}
+
+function saveWorkspaceList() {
+  localStorage.setItem(WORKSPACES_KEY, JSON.stringify(workspaces));
+}
+
+function initWorkspaces() {
+  workspaces = loadWorkspaceList();
+
+  if (workspaces.length === 0) {
+    // Migracja: przed wprowadzeniem obszarów roboczych istniał jeden płaski
+    // klucz autozapisu — przenosimy go do pierwszego obszaru, żeby nikt nie
+    // stracił obecnej pracy.
+    const legacy = localStorage.getItem(LEGACY_AUTOSAVE_KEY);
+    const defaultWs: Workspace = { id: makeId("ws"), name: "Obszar 1" };
+    workspaces = [defaultWs];
+    if (legacy) {
+      localStorage.setItem(workspaceAutosaveKey(defaultWs.id), legacy);
+    }
+    saveWorkspaceList();
+  }
+
+  activeWorkspaceId = localStorage.getItem(ACTIVE_WORKSPACE_KEY) ?? workspaces[0].id;
+  if (!workspaces.some((w) => w.id === activeWorkspaceId)) {
+    activeWorkspaceId = workspaces[0].id;
+  }
+}
+
+function renderWorkspaceTabs() {
+  const list = document.querySelector<HTMLDivElement>("#tabs-list")!;
+  list.innerHTML = "";
+  for (const ws of workspaces) {
+    const tab = document.createElement("div");
+    tab.className = "workspace-tab" + (ws.id === activeWorkspaceId ? " active" : "");
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = ws.name;
+    tab.appendChild(nameSpan);
+
+    if (workspaces.length > 1) {
+      const closeBtn = document.createElement("span");
+      closeBtn.className = "tab-close";
+      closeBtn.textContent = "✕";
+      closeBtn.title = "Zamknij obszar roboczy";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeWorkspace(ws.id);
+      });
+      tab.appendChild(closeBtn);
+    }
+
+    tab.addEventListener("click", () => switchWorkspace(ws.id));
+    tab.addEventListener("dblclick", () => renameWorkspace(ws.id));
+    list.appendChild(tab);
+  }
+}
+
+function loadActiveWorkspaceGraph() {
+  const raw = localStorage.getItem(workspaceAutosaveKey(activeWorkspaceId));
+  if (raw) {
+    try {
+      const data = JSON.parse(raw) as SavedGraph;
+      if (Array.isArray(data.nodes) && Array.isArray(data.edges) && data.nodes.length > 0) {
+        loadGraph(data);
+        return;
+      }
+    } catch {
+      // uszkodzony autozapis — ignorujemy i wracamy do domyślnego stanu
+    }
+  }
+  createNode(60, 60, "script", { script: "Get-Date" });
+}
+
+function switchWorkspace(id: string) {
+  if (id === activeWorkspaceId) return;
+
+  localStorage.setItem(workspaceAutosaveKey(activeWorkspaceId), JSON.stringify(serializeGraph()));
+
+  for (const nid of [...nodes.keys()]) deleteNode(nid);
+  selectedNodeId = null;
+  renderInspector();
+
+  activeWorkspaceId = id;
+  localStorage.setItem(ACTIVE_WORKSPACE_KEY, activeWorkspaceId);
+  renderWorkspaceTabs();
+  loadActiveWorkspaceGraph();
+}
+
+function addWorkspace() {
+  localStorage.setItem(workspaceAutosaveKey(activeWorkspaceId), JSON.stringify(serializeGraph()));
+  const ws: Workspace = { id: makeId("ws"), name: `Obszar ${workspaces.length + 1}` };
+  workspaces.push(ws);
+  saveWorkspaceList();
+  switchWorkspace(ws.id);
+}
+
+function closeWorkspace(id: string) {
+  if (workspaces.length <= 1) return;
+  if (!confirm("Zamknąć ten obszar roboczy? Jego zapis zostanie usunięty.")) return;
+
+  localStorage.removeItem(workspaceAutosaveKey(id));
+  workspaces = workspaces.filter((w) => w.id !== id);
+  saveWorkspaceList();
+
+  if (activeWorkspaceId === id) {
+    // "" nigdy nie pasuje do prawdziwego id — wymusza pełne przełączenie
+    // przez switchWorkspace mimo że zamykaliśmy właśnie aktywną zakładkę.
+    activeWorkspaceId = "";
+    switchWorkspace(workspaces[0].id);
+  } else {
+    renderWorkspaceTabs();
+  }
+}
+
+function renameWorkspace(id: string) {
+  const ws = workspaces.find((w) => w.id === id);
+  if (!ws) return;
+  const name = prompt("Nowa nazwa obszaru roboczego:", ws.name);
+  if (!name) return;
+  ws.name = name.trim() || ws.name;
+  saveWorkspaceList();
+  renderWorkspaceTabs();
+}
+
 function setupAgentPanel() {
   const hintEl = document.querySelector<HTMLSpanElement>("#hint")!;
   if (desktopMode) {
@@ -756,6 +1161,30 @@ function addNodeAt(kind: NodeKind) {
 
 window.addEventListener("resize", redrawEdges);
 
+canvasWrap.addEventListener("mousedown", (e) => {
+  const target = e.target as HTMLElement;
+  if (target.closest(".node")) return;
+  e.preventDefault();
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startScrollLeft = canvasWrap.scrollLeft;
+  const startScrollTop = canvasWrap.scrollTop;
+  canvasWrap.classList.add("panning");
+
+  function onMove(ev: MouseEvent) {
+    canvasWrap.scrollLeft = startScrollLeft - (ev.clientX - startX);
+    canvasWrap.scrollTop = startScrollTop - (ev.clientY - startY);
+  }
+  function onUp() {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    canvasWrap.classList.remove("panning");
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
 document.querySelector("#add-script")?.addEventListener("click", () => addNodeAt("script"));
 document.querySelector("#add-condition")?.addEventListener("click", () => addNodeAt("condition"));
 document.querySelector("#add-loop")?.addEventListener("click", () => addNodeAt("loop"));
@@ -764,7 +1193,12 @@ document.querySelector("#run-all")?.addEventListener("click", () => void runGrap
 document.querySelector("#clear-all")?.addEventListener("click", clearAll);
 document.querySelector("#restart-session")?.addEventListener("click", () => {
   if (!confirm("Zrestartować sesję PowerShell? Wszystkie zmienne zostaną utracone.")) return;
-  void restartSession().catch((err) => alert(String(err)));
+  void restartSession()
+    .then(() => logToConsole("Sesja", "info", "Zrestartowano sesję PowerShell."))
+    .catch((err) => {
+      logToConsole("Sesja", "error", String(err));
+      alert(String(err));
+    });
 });
 document.querySelector("#save-graph")?.addEventListener("click", saveGraph);
 const loadInput = document.querySelector<HTMLInputElement>("#load-graph-input")!;
@@ -774,22 +1208,17 @@ loadInput.addEventListener("change", () => {
   if (file) void loadGraphFromFile(file);
   loadInput.value = "";
 });
-
-function loadAutosaveOrDefault() {
-  const raw = localStorage.getItem(AUTOSAVE_KEY);
-  if (raw) {
-    try {
-      const data = JSON.parse(raw) as SavedGraph;
-      if (Array.isArray(data.nodes) && Array.isArray(data.edges) && data.nodes.length > 0) {
-        loadGraph(data);
-        return;
-      }
-    } catch {
-      // uszkodzony autozapis — ignorujemy i wracamy do domyślnego stanu
-    }
-  }
-  createNode(60, 60, "script", { script: "Get-Date" });
-}
+document.querySelector("#add-workspace")?.addEventListener("click", addWorkspace);
+document.querySelector("#clear-console")?.addEventListener("click", () => {
+  consoleLogEl.innerHTML = "";
+});
 
 setupAgentPanel();
-loadAutosaveOrDefault();
+renderTemplates();
+setupResizableSidePanel("#sidebar-templates", 220);
+setupResizableSidePanel("#sidebar-inspector", 280);
+setupResizableBottomPanel("#console-panel", 70);
+
+initWorkspaces();
+renderWorkspaceTabs();
+loadActiveWorkspaceGraph();

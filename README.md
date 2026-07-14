@@ -54,6 +54,18 @@ Przeglądarka **nie może** sama uruchamiać PowerShell na Twoim komputerze — 
 
 Przycisk "Uruchom blok"/"Sprawdź warunek"/"Podgląd iteracji" na pojedynczym węźle Warunek/Pętla pokazuje wynik (którą gałąź by wybrał / ile byłoby iteracji) bez uruchamiania dalszej części grafu.
 
+### Panele UI
+
+Trzy dodatkowe panele, chowane/pokazywane przyciskami w pasku narzędzi (stan zapamiętany między sesjami):
+
+- **📚 Szablony** (lewy sidebar) — gotowe fragmenty PowerShell pod typowe zadania OSINT (DNS, geolokalizacja IP, nagłówki HTTP, port, WHOIS przez RDAP, traceroute). Klik tworzy nowy blok Skrypt z wypełnioną treścią.
+- **🔍 Inspektor** (prawy sidebar) — powiększony, wygodniejszy widok zaznaczonego bloku (klik na blok na canvasie go zaznacza). Edycja tytułu/skryptu w inspektorze i w samym bloku jest dwukierunkowo zsynchronizowana.
+- **🖥️ Konsola** (dolny panel) — chronologiczny log wszystkiego, co wykonało się w bieżącej sesji (nie tylko wynik pojedynczego bloku) — jak zwykły terminal. "Wyczyść log" czyści tylko widok, nie wpływa na sesję PowerShell.
+
+### Obszary robocze (zakładki)
+
+Pasek zakładek nad canvasem pozwala trzymać kilka niezależnych grafów obok siebie (jak karty w przeglądarce) — "+" dodaje nowy, dwuklik na nazwę pozwala ją zmienić, "✕" zamyka (usuwa też jej zapis). Każdy obszar ma własny autozapis; przełączenie zakładki nie wpływa na pozostałe.
+
 ## Model bezpieczeństwa trybu web
 
 - Agent nasłuchuje wyłącznie na `127.0.0.1:47932` (niedostępny z sieci lokalnej ani internetu).

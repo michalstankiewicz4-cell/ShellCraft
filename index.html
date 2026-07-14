@@ -12,16 +12,23 @@
     <div id="app">
       <header id="toolbar">
         <span class="brand">ShellCraft</span>
-        <button id="add-script">+ Skrypt</button>
-        <button id="add-condition">+ Warunek</button>
-        <button id="add-loop">+ Pętla</button>
-        <button id="add-comment">+ Notatka</button>
-        <button id="run-all">▶ Uruchom graf</button>
-        <button id="clear-all">Wyczyść</button>
-        <button id="restart-session" title="Restartuje sesję PowerShell — traci wszystkie zmienne">🔄 Nowa sesja</button>
-        <button id="save-graph" title="Zapisuje graf do pliku .json">💾 Zapisz</button>
-        <button id="load-graph" title="Wczytuje graf z pliku .json">📂 Wczytaj</button>
-        <input id="load-graph-input" type="file" accept="application/json" hidden />
+
+        <div class="toolbar-group">
+          <button id="add-script">+ Skrypt</button>
+          <button id="add-condition">+ Warunek</button>
+          <button id="add-loop">+ Pętla</button>
+          <button id="add-comment">+ Notatka</button>
+        </div>
+        <span class="toolbar-sep"></span>
+
+        <div class="toolbar-group">
+          <button id="run-all">▶ Uruchom graf</button>
+          <button id="clear-all">Wyczyść</button>
+          <button id="restart-session" title="Restartuje sesję PowerShell — traci wszystkie zmienne">🔄 Nowa sesja</button>
+          <button id="save-graph" title="Zapisuje graf do pliku .json">💾 Zapisz</button>
+          <button id="load-graph" title="Wczytuje graf z pliku .json">📂 Wczytaj</button>
+          <input id="load-graph-input" type="file" accept="application/json" hidden />
+        </div>
         <div id="agent-panel" class="agent-panel">
           <span id="agent-status" class="agent-status" title="Status połączenia z agentem"></span>
           <input id="agent-token" type="text" placeholder="Token agenta" autocomplete="off" spellcheck="false" />
@@ -29,9 +36,42 @@
         </div>
         <span id="hint" class="hint"></span>
       </header>
-      <div id="canvas-wrap">
-        <svg id="edges-layer"></svg>
-        <div id="nodes-layer"></div>
+
+      <div id="workspace-tabs">
+        <div id="tabs-list"></div>
+        <button id="add-workspace" title="Nowy obszar roboczy">+</button>
+      </div>
+
+      <div id="main-area">
+        <aside id="sidebar-templates" class="side-panel">
+          <div class="side-panel-header">Szablony OSINT</div>
+          <div id="templates-list" class="side-panel-body"></div>
+        </aside>
+        <div class="resize-handle resize-handle-v" data-resize="sidebar-templates" data-grow="1"></div>
+
+        <div id="canvas-column">
+          <div id="canvas-wrap">
+            <svg id="edges-layer"></svg>
+            <div id="nodes-layer"></div>
+          </div>
+
+          <div class="resize-handle resize-handle-h" data-resize="console-panel"></div>
+          <div id="console-panel" class="bottom-panel">
+            <div class="bottom-panel-header">
+              <span>Konsola</span>
+              <button id="clear-console">Wyczyść log</button>
+            </div>
+            <div id="console-log"></div>
+          </div>
+        </div>
+
+        <div class="resize-handle resize-handle-v" data-resize="sidebar-inspector" data-grow="-1"></div>
+        <aside id="sidebar-inspector" class="side-panel">
+          <div class="side-panel-header">Inspektor</div>
+          <div id="inspector-content" class="side-panel-body">
+            <p class="inspector-placeholder">Zaznacz blok, aby zobaczyć szczegóły.</p>
+          </div>
+        </aside>
       </div>
     </div>
   </body>
