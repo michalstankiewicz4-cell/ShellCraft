@@ -6,3 +6,26 @@ Concept pictures
 
 <img width="1919" height="1199" alt="image" src="https://github.com/user-attachments/assets/146da397-51b0-4ac8-b632-83af70822d6b" />
 
+## Stack
+
+- **Tauri 2 (Rust)** — backend, uruchamia bloki jako procesy `powershell.exe`
+- **Vite + TypeScript (vanilla)** — frontend, edytor blokowo-węzłowy (canvas, drag & drop, połączenia SVG)
+
+## Uruchomienie (dev)
+
+```bash
+npm install
+npm run tauri dev
+```
+
+## Jak to działa
+
+- Każdy blok to niezależne wywołanie `powershell.exe -NonInteractive -Command <script>` (komenda Rust `run_node` w [src-tauri/src/lib.rs](src-tauri/src/lib.rs)).
+- Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf" (sortowanie topologiczne, wykrywanie cykli).
+- Kliknięcie na linię połączenia usuwa je.
+
+## Znane ograniczenia / dalszy rozwój
+
+- Bloki nie dzielą obecnie stanu sesji PowerShell (każdy odpala osobny proces) — zmienne ustawione w jednym bloku nie są widoczne w kolejnym. Następny krok: jedna trwała sesja PowerShell (np. przez `System.Management.Automation` runspace albo długo żyjący proces z markerami końca komendy) współdzielona między węzłami.
+- Brak zapisu/wczytywania grafu (na razie stan istnieje tylko w pamięci okna).
+- Brak typów węzłów poza "surowy skrypt PowerShell" (np. węzły warunkowe, pętle, zmienne wejścia/wyjścia między blokami).
