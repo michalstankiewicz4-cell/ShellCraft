@@ -8,20 +8,19 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Serialize)]
-struct NodeOutput {
-    stdout: String,
-    stderr: String,
-    code: Option<i32>,
+pub struct NodeOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub code: Option<i32>,
 }
 
-#[tauri::command]
-fn run_node(script: String) -> Result<NodeOutput, String> {
+pub fn execute_script(script: &str) -> NodeOutput {
     if script.trim().is_empty() {
-        return Ok(NodeOutput {
+        return NodeOutput {
             stdout: String::new(),
             stderr: String::new(),
             code: Some(0),
-        });
+        };
     }
 
     let mut cmd = Command::new("powershell.exe");
@@ -32,19 +31,29 @@ fn run_node(script: String) -> Result<NodeOutput, String> {
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        &script,
+        script,
     ]);
 
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd.output().map_err(|e| e.to_string())?;
+    match cmd.output() {
+        Ok(output) => NodeOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            code: output.status.code(),
+        },
+        Err(e) => NodeOutput {
+            stdout: String::new(),
+            stderr: e.to_string(),
+            code: Some(-1),
+        },
+    }
+}
 
-    Ok(NodeOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        code: output.status.code(),
-    })
+#[tauri::command]
+fn run_node(script: String) -> Result<NodeOutput, String> {
+    Ok(execute_script(&script))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

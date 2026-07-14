@@ -46,6 +46,45 @@ body,
   margin-left: auto;
   color: #888;
   font-size: 12px;
+  max-width: 40%;
+}
+
+.agent-panel {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid #3c3c3c;
+}
+
+.agent-panel.visible {
+  display: flex;
+}
+
+.agent-panel input {
+  background: #1e1e1e;
+  color: #e6e6e6;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  width: 180px;
+}
+
+.agent-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #666;
+  flex: 0 0 auto;
+}
+
+.agent-status.ok {
+  background: #4ec9b0;
+}
+
+.agent-status.error {
+  background: #f14c4c;
 }
 
 button {

@@ -4,7 +4,8 @@ import { defineConfig } from "vite";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
+  base: mode === "gh-pages" ? "/ShellCraft/" : "/",
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

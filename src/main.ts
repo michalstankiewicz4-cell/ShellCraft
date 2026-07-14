@@ -1,9 +1,57 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 interface NodeOutput {
   stdout: string;
   stderr: string;
   code: number | null;
+}
+
+const AGENT_URL = "http://127.0.0.1:47932";
+const TOKEN_KEY = "shellcraft-agent-token";
+const desktopMode = isTauri();
+
+function getAgentToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
+}
+
+function setAgentToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+async function checkAgentHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(`${AGENT_URL}/health`, {
+      headers: { "X-ShellCraft-Token": getAgentToken() },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function runViaAgent(script: string): Promise<NodeOutput> {
+  const res = await fetch(`${AGENT_URL}/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-ShellCraft-Token": getAgentToken(),
+    },
+    body: JSON.stringify({ script }),
+  });
+  if (res.status === 401) {
+    throw new Error("Zły lub brak tokenu agenta. Wklej poprawny token w panelu \"Połącz z agentem\".");
+  }
+  if (!res.ok) {
+    throw new Error(`Agent zwrócił błąd HTTP ${res.status}`);
+  }
+  return (await res.json()) as NodeOutput;
+}
+
+async function executeScript(script: string): Promise<NodeOutput> {
+  if (desktopMode) {
+    return invoke<NodeOutput>("run_node", { script });
+  }
+  return runViaAgent(script);
 }
 
 interface NodeBlock {
@@ -233,7 +281,7 @@ async function runNode(node: NodeBlock) {
   node.el.classList.add("running");
   node.outputEl.textContent = "…";
   try {
-    const result = await invoke<NodeOutput>("run_node", { script: node.scriptEl.value });
+    const result = await executeScript(node.scriptEl.value);
     node.el.classList.remove("running");
     const ok = result.code === 0 || result.code === null;
     node.el.classList.add(ok ? "ok" : "error");
@@ -275,6 +323,43 @@ function clearAll() {
   for (const id of [...nodes.keys()]) deleteNode(id);
 }
 
+function setupAgentPanel() {
+  const hintEl = document.querySelector<HTMLSpanElement>("#hint")!;
+  if (desktopMode) {
+    hintEl.textContent =
+      "Przeciągnij z kropki wyjścia (prawa) do kropki wejścia (lewa) innego bloku, aby połączyć. Kliknij linię, aby ją usunąć.";
+    return;
+  }
+
+  hintEl.textContent =
+    "Tryb przeglądarki: wymaga lokalnie uruchomionego agenta ShellCraft. Wklej token pokazany w konsoli agenta i kliknij \"Sprawdź połączenie\".";
+
+  const panel = document.querySelector<HTMLDivElement>("#agent-panel")!;
+  const tokenInput = document.querySelector<HTMLInputElement>("#agent-token")!;
+  const statusEl = document.querySelector<HTMLSpanElement>("#agent-status")!;
+  const checkBtn = document.querySelector<HTMLButtonElement>("#agent-check")!;
+
+  panel.classList.add("visible");
+  tokenInput.value = getAgentToken();
+
+  async function refreshStatus() {
+    statusEl.classList.remove("ok", "error");
+    const healthy = await checkAgentHealth();
+    statusEl.classList.add(healthy ? "ok" : "error");
+    statusEl.title = healthy
+      ? "Połączono z agentem"
+      : "Brak połączenia z agentem (sprawdź, czy działa i czy token jest poprawny)";
+  }
+
+  tokenInput.addEventListener("change", () => setAgentToken(tokenInput.value.trim()));
+  checkBtn.addEventListener("click", () => {
+    setAgentToken(tokenInput.value.trim());
+    void refreshStatus();
+  });
+
+  if (getAgentToken()) void refreshStatus();
+}
+
 window.addEventListener("resize", redrawEdges);
 
 document.querySelector("#add-node")?.addEventListener("click", () => {
@@ -284,4 +369,5 @@ document.querySelector("#add-node")?.addEventListener("click", () => {
 document.querySelector("#run-all")?.addEventListener("click", () => void runAll());
 document.querySelector("#clear-all")?.addEventListener("click", clearAll);
 
+setupAgentPanel();
 createNode(60, 60, "Get-Date");
