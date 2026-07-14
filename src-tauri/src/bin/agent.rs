@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use shellcraft_lib::execute_script;
+use shellcraft_lib::SessionManager;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -75,7 +75,7 @@ fn has_valid_token(request: &Request, token: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn handle(mut request: Request, token: &str) {
+fn handle(mut request: Request, token: &str, manager: &SessionManager) {
     let origin = get_header(&request, "Origin").unwrap_or_default();
     let origin_ok = ALLOWED_ORIGINS.contains(&origin.as_str());
     let method = request.method().clone();
@@ -121,11 +121,19 @@ fn handle(mut request: Request, token: &str) {
                 }
             };
 
-            let output = execute_script(&payload.script);
+            let output = manager.run(&payload.script);
             let json = serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string());
             let resp = Response::from_string(json)
                 .with_header(header("Content-Type", "application/json"));
             let _ = request.respond(with_cors(resp, &origin));
+        }
+        (Method::Post, "/restart") => {
+            if !has_valid_token(&request, token) {
+                let _ = request.respond(with_cors(Response::empty(401), &origin));
+                return;
+            }
+            manager.restart();
+            let _ = request.respond(with_cors(Response::from_string("ok"), &origin));
         }
         _ => {
             let _ = request.respond(with_cors(Response::empty(404), &origin));
@@ -135,6 +143,7 @@ fn handle(mut request: Request, token: &str) {
 
 fn main() {
     let token = Arc::new(load_or_create_token());
+    let manager = Arc::new(SessionManager::new());
     let addr = format!("127.0.0.1:{PORT}");
     let server = Server::http(&addr).expect("nie udało się uruchomić agenta na porcie");
 
@@ -144,6 +153,7 @@ fn main() {
 
     for request in server.incoming_requests() {
         let token = Arc::clone(&token);
-        thread::spawn(move || handle(request, &token));
+        let manager = Arc::clone(&manager);
+        thread::spawn(move || handle(request, &token, &manager));
     }
 }

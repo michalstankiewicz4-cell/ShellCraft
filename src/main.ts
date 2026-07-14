@@ -54,6 +54,20 @@ async function executeScript(script: string): Promise<NodeOutput> {
   return runViaAgent(script);
 }
 
+async function restartSession(): Promise<void> {
+  if (desktopMode) {
+    await invoke("restart_session");
+    return;
+  }
+  const res = await fetch(`${AGENT_URL}/restart`, {
+    method: "POST",
+    headers: { "X-ShellCraft-Token": getAgentToken() },
+  });
+  if (!res.ok) {
+    throw new Error(`Agent zwrócił błąd HTTP ${res.status}`);
+  }
+}
+
 interface NodeBlock {
   id: string;
   el: HTMLDivElement;
@@ -368,6 +382,10 @@ document.querySelector("#add-node")?.addEventListener("click", () => {
 });
 document.querySelector("#run-all")?.addEventListener("click", () => void runAll());
 document.querySelector("#clear-all")?.addEventListener("click", clearAll);
+document.querySelector("#restart-session")?.addEventListener("click", () => {
+  if (!confirm("Zrestartować sesję PowerShell? Wszystkie zmienne zostaną utracone.")) return;
+  void restartSession().catch((err) => alert(String(err)));
+});
 
 setupAgentPanel();
 createNode(60, 60, "Get-Date");

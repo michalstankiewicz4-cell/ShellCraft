@@ -38,7 +38,8 @@ Przeglądarka **nie może** sama uruchamiać PowerShell na Twoim komputerze — 
 
 ## Jak to działa
 
-- Każdy blok to niezależne wywołanie `powershell.exe -NonInteractive -Command <script>` (funkcja Rust `execute_script` w [src-tauri/src/lib.rs](src-tauri/src/lib.rs), używana zarówno przez aplikację desktopową, jak i przez agenta w trybie web).
+- Wszystkie bloki dzielą **jedną, długo żyjącą sesję PowerShell** (`SessionManager`/`ShellSession` w [src-tauri/src/lib.rs](src-tauri/src/lib.rs), używana zarówno przez aplikację desktopową, jak i przez agenta w trybie web) — zmienne, zaimportowane moduły, `cd` przechodzą z bloku do bloku, dokładnie jak w prawdziwej konsoli. Sesja startuje przy pierwszym uruchomionym bloku i żyje, dopóki nie zamkniesz aplikacji/agenta albo nie klikniesz "Nowa sesja".
+- Pojedynczy blok ma limit **120 sekund** — jeśli go przekroczy (np. nieskończona pętla), zwróci błąd timeoutu. W takim wypadku sesja może zostać zawieszona (blokuje kolejne bloki) — użyj przycisku "🔄 Nowa sesja", żeby wymusić restart procesu PowerShell (traci wszystkie zmienne, ale odblokowuje dalszą pracę). Twardego przerwania pojedynczego zawieszonego bloku w locie na razie nie ma.
 - Bloki łączy się przeciągając z kropki wyjścia (prawa, zielona) do kropki wejścia (lewa, niebieska) innego bloku — połączenia definiują kolejność wykonania w trybie "Uruchom graf" (sortowanie topologiczne, wykrywanie cykli).
 - Kliknięcie na linię połączenia usuwa je.
 
@@ -74,6 +75,6 @@ Strona na GitHub Pages wdraża się automatycznie (`.github/workflows/deploy-pag
 
 ## Znane ograniczenia / dalszy rozwój
 
-- Bloki nie dzielą obecnie stanu sesji PowerShell (każdy odpala osobny proces) — zmienne ustawione w jednym bloku nie są widoczne w kolejnym. Następny krok: jedna trwała sesja PowerShell (np. przez `System.Management.Automation` runspace albo długo żyjący proces z markerami końca komendy) współdzielona między węzłami.
+- Brak twardego przerwania pojedynczego zawieszonego bloku (np. nieskończonej pętli) — trzeba zrestartować całą sesję przyciskiem "Nowa sesja".
 - Brak zapisu/wczytywania grafu (na razie stan istnieje tylko w pamięci okna).
 - Brak typów węzłów poza "surowy skrypt PowerShell" (np. węzły warunkowe, pętle, zmienne wejścia/wyjścia między blokami).
